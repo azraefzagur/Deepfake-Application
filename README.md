@@ -2,7 +2,7 @@
 
 Bu proje, bir video üzerinde yüz değiştirme (face swap) işlemi gerçekleştiren web tabanlı bir simülatördür.
 
-## 🚀 Kurulum Adımları
+##  Kurulum Adımları
 
 Arkadaşlarınızın bu projeyi kendi bilgisayarlarında çalıştırabilmesi için şu adımları izlemesi gerekmektedir:
 
