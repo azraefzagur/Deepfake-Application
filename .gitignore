@@ -1,0 +1,13 @@
+.conda/
+.venv/
+.venv_deepfake/
+__pycache__/
+*.pyc
+outputs/
+pip_error.txt
+.vscode/
+.env
+
+*.onnx
+*.pth
+*.pt
