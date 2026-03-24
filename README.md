@@ -1,40 +1,91 @@
-# Deepfake Application
+ --Entertainment-Oriented AI-Based Deepfake Interaction System
+ Project Overview
 
-Bu proje, bir video üzerinde yüz değiştirme (face swap) işlemi gerçekleştiren web tabanlı bir simülatördür.
+The Entertainment-Oriented AI-Based Deepfake Interaction System is an interactive multimedia project that combines voice cloning, face swapping, and AI-based conversational simulation.
 
-##  Kurulum Adımları
+The system is designed to create entertainment and parody-focused virtual meeting experiences.
 
- Bu projeyi  çalıştırabilmek için şu adımları izlemesi gerekmektedir:
+ This project is strictly developed for academic and entertainment purposes only.
+All generated content includes audio and visual watermarking for safety and transparency.
 
-### 1. Projeyi Klonlayın
-```bash
-git clone https://github.com/azraefzagur/Deepfake-Application.git
-cd Deepfake-Application
-```
+Core Features
+ 1. Voice Cloning Module
+Pre-trained celebrity-style voice models
+Text-to-Speech (TTS) from user input
+Adjustable speech rate, tone, and emotion
+Optional real-time voice conversion
+Export as WAV / MP3
+Inaudible watermarking in generated audio
 
-### 2. Büyük Model Dosyalarını Temin Edin
-GitHub'ın dosya boyutu sınırları nedeniyle bazı büyük modeller (.onnx ve .pth) bu depoya dahil edilmemiştir. Lütfen bu dosyaları proje sahibinden (Drive üzerinden) temin edin:
-* `inswapper_128.onnx` -> `data/` klasörüne yerleştirilmelidir.
-* `insightface-0.7.3-cp39-cp39-win_amd64.whl` -> Ana dizine yerleştirilmelidir (Windows kullanıcıları için kurulumu kolaylaştırır).
+ 2. AI Video Face Swapping Module
+Predefined publicly available face models
+Face detection & landmark alignment
+Expression, pose, and lighting preservation
+Real-time / near real-time simulation
+Persistent labels:
+AI Generated
+Parody Mode
 
-### 3. API Anahtarını Yapılandırın
-Proje ana dizininde `.env` adlı bir dosya oluşturun ve içine geçerli bir Gemini API anahtarı ekleyin:
-```env
-GEMINI_API_KEY=KENDI_API_ANAHTARINIZ_BURAYA
-```
+ --4. AI Conversation Module
+Personality-based dialogue generation
+Real-time two-way interaction
+Text and voice communication support
+Secure logging for academic evaluation
 
-### 4. Sanal Ortamı Hazırlayın (Python 3.9 Tavsiye Edilir)
-Aşağıdaki komutları sırasıyla terminalde çalıştırarak gerekli kütüphaneleri kurun:
-```cmd
-python -m venv .venv_deepfake
-call .venv_deepfake\Scripts\activate
-pip install ./insightface-0.7.3-cp39-cp39-win_amd64.whl
-pip install -r requirements.txt
-```
+--5. Meeting Simulation
+Virtual video conferencing environment
+AI-generated participants
+Predefined scenarios:
+Comedy interview
+Job interview parody
+Friendly debate
+Motivational speech
+Optional multi-character mode
 
-### 5. Uygulamayı Başlatın
-Kurulum bittikten sonra proje klasöründeki `start.bat` dosyasına çift tıklayarak uygulamayı başlatabilirsiniz.
+ 6. Quantitative Evaluation
+Voice Metrics
+MCD (Mel Cepstral Distortion)
+SNR (Signal-to-Noise Ratio)
+Video Metrics
+SSIM (Structural Similarity Index)
+PSNR (Peak Signal-to-Noise Ratio)
+Performance
+End-to-end latency measurement
 
----
-> [!IMPORTANT]
-> Uygulamanın sorunsuz çalışması için Python 3.9 sürümü önerilmektedir.
+  7. User Interface
+Celebrity selection panel (voice, face, style)
+Real-time preview
+Download generated outputs
+Restricted automatic public sharing
+
+--Purpose
+This project explores how AI-generated media technologies can be used in interactive entertainment environments, while ensuring ethical transparency through watermarking techniques.
+
+--Ethical Notice
+This system is intended only for:
+
+Entertainment
+Parody
+Academic research
+
+All generated content must clearly indicate that it is AI-generated.
+
+--Not intended for:
+Deception
+Impersonation
+Malicious use
+
+-- Technologies Used
+Artificial Intelligence (AI)
+Deep Learning
+Text-to-Speech (TTS)
+Voice Conversion
+Face Detection & Face Swapping
+Natural Language Processing (NLP)
+Real-Time Media Processing
+
+-- Outputs
+AI-generated audio files
+AI-generated deepfake videos
+Simulated interactive meetings
+Academic evaluation results
