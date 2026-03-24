@@ -4,7 +4,7 @@ Bu proje, bir video üzerinde yüz değiştirme (face swap) işlemi gerçekleşt
 
 ##  Kurulum Adımları
 
-Arkadaşlarınızın bu projeyi kendi bilgisayarlarında çalıştırabilmesi için şu adımları izlemesi gerekmektedir:
+ Bu projeyi  çalıştırabilmek için şu adımları izlemesi gerekmektedir:
 
 ### 1. Projeyi Klonlayın
 ```bash
