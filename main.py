@@ -24,6 +24,9 @@ voice_cloner = VoiceCloner()
 face_swapper = FaceSwapper()
 conv_manager = ConversationManager()
 
+# Global state for asynchronous frame processing
+processing_lock = False
+
 @app.route('/')
 def index():
     response = make_response(send_from_directory('web', 'index.html'))
@@ -74,16 +77,39 @@ def api_chat():
 def handle_video_frame(data):
     """
     FR-2.10: Handle real-time video frames from frontend, run Face Swap, and return swapped frame.
+    Uses an asynchronous-like approach by skipping frames if previous processing is still ongoing.
     """
-    print("Video frame received from frontend")
+    global processing_lock
+    
+    if processing_lock:
+        # Önceki kare hala işleniyor, bu kareyi atla (gecikmeyi önlemek için)
+        return
+
     image_data = data.get('image')
     face_model = data.get('face_model', 'face1')
     
-    # Process frame through FaceSwapper pipeline
-    processed_image = face_swapper.process_frame(image_data, face_model)
-    print(f"Frame processed. Original length: {len(str(image_data))}, Processed length: {len(str(processed_image))}")
-    
-    emit('processed_frame', {'image': processed_image})
+    if not image_data:
+        return
+
+    # Request nesnesinden sid bilgisini iş parçacığı dışına taşıyoruz
+    from flask import request as flask_request
+    target_sid = flask_request.sid
+
+    def process_and_emit(img, model, sid):
+        global processing_lock
+        processing_lock = True
+        try:
+            # Face Swap işlemini yap
+            processed_image = face_swapper.process_frame(img, model)
+            # SocketIO üzerinden sadece ilgili kullanıcıya (sid) geri gönder
+            socketio.emit('processed_frame', {'image': processed_image}, room=sid)
+        except Exception as e:
+            print(f"Frame Processing Error: {e}")
+        finally:
+            processing_lock = False
+
+    # Arka planda çalıştır
+    socketio.start_background_task(process_and_emit, image_data, face_model, target_sid)
 
 def main():
     print("AI-Based Deepfake Interaction System Intialized")

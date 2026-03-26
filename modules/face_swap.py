@@ -25,16 +25,37 @@ class FaceSwapper:
         
         try:
             # 1. Initialize FaceAnalysis for detecting faces
-            # This will download the buffalo_l model (~330MB) to ~/.insightface/models on first run!
-            print("FaceAnalysis modelleri yükleniyor (İlk açılışta sürebilir)...")
-            self.app = FaceAnalysis(name='buffalo_l', providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-            self.app.prepare(ctx_id=0, det_size=(320, 320))
+            print("FaceAnalysis modelleri yükleniyor (CUDA öncelikli)...")
+            
+            # Ortam değişkenlerini ayarla (bazı durumlarda onnxruntime için gerekli olabilir)
+            os.environ['ORT_CUDA_FLAGS'] = '1'
+            
+            # Providers listesi: Önce CUDA, sonra CPU
+            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            
+            try:
+                print("FaceAnalysis (Detection) başlatılıyor...")
+                self.app = FaceAnalysis(name='buffalo_l', providers=providers)
+                self.app.prepare(ctx_id=0, det_size=(320, 320))
+                print(f"FaceAnalysis hazır. Kullanılan cihaz ID: 0")
+            except Exception as det_e:
+                print(f"UYARI: FaceAnalysis CUDA ile başlatılamadı ({det_e}). CPU'ya geçiliyor...")
+                self.app = FaceAnalysis(name='buffalo_l', providers=['CPUExecutionProvider'])
+                self.app.prepare(ctx_id=-1, det_size=(320, 320))
             
             # 2. Load Inswapper Model
             model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'models', 'inswapper_128.onnx')
             if os.path.exists(model_path):
-                self.swapper = insightface.model_zoo.get_model(model_path, download=False, download_zip=False, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
-                print("FaceSwapper modülü BAŞARIYLA başlatıldı! (Inswapper ONNX hazır)")
+                try:
+                    self.swapper = insightface.model_zoo.get_model(model_path, download=False, download_zip=False, providers=['CUDAExecutionProvider'])
+                    print("BAŞARI: Inswapper modeli CUDA ile başlatıldı.")
+                except Exception as cuda_e:
+                    print(f"BİLGİ: Inswapper CUDA ile başlatılamadı ({cuda_e}). CPU'ya geçiliyor...")
+                    self.swapper = insightface.model_zoo.get_model(model_path, download=False, download_zip=False, providers=['CPUExecutionProvider'])
+                
+                # Gerçekten ne kullanılıyor?
+                actual_provider = self.swapper.get_provider() if hasattr(self.swapper, 'get_provider') else "Unknown"
+                print(f"Aktif Provider: {actual_provider}")
             else:
                 print(f"KRİTİK HATA - ONNX Modeli bulunamadı: {model_path}")
                 
