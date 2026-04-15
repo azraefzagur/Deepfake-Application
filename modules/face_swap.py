@@ -123,3 +123,36 @@ class FaceSwapper:
         except Exception as e:
             print("Video Processing Error:", e)
             return base64_image
+
+    def process_frame_raw(self, img: np.ndarray) -> np.ndarray:
+        """
+        WebRTC / aiortc pipeline için ham NumPy (BGR) -> ham NumPy (BGR) dönüşümü.
+        FaceSwapper'ın GPU işlemesini doğrudan NumPy dizileriyle çağırır;
+        base64 encode/decode yükü yoktur.
+
+        Args:
+            img: OpenCV BGR formatında NumPy dizisi (aiortc'den gelen VideoFrame'den dönüştürülmüş).
+
+        Returns:
+            İşlenmiş BGR NumPy dizisi.
+        """
+        try:
+            if img is None:
+                return img
+
+            # Dinamik model kontrolü (select_model daha önce çağrılmış olmalı)
+            if self.app is not None and self.swapper is not None and self.source_face is not None:
+                faces = self.app.get(img)
+                if len(faces) > 0:
+                    img = self.swapper.get(img, faces[0], self.source_face, paste_back=True)
+
+            # FR-2.11: Kalıcı Filigran (Watermark)
+            cv2.putText(
+                img, "AI GENERATED - DEEPFAKE", (15, 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2,
+            )
+            return img
+
+        except Exception as e:
+            print(f"process_frame_raw Hatası: {e}")
+            return img
