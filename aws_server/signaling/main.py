@@ -1,174 +1,147 @@
 """
-AWS Signaling Server (Sinyalizasyon Sunucusu)
-=============================================
+AWS Signaling Server (WebSocket Relay) - Ngrok'suz Doğrudan Bağlantı
+=====================================================================
 AWS t2.micro üzerinde çalışır. Tek görevi:
-1. React frontend'den WebSocket üzerinden gelen WebRTC "offer" (SDP + ICE) paketlerini almak.
-2. Bu teklifi HTTP POST ile GPU worker'ın Ngrok URL'ine iletmek.
-3. GPU'dan dönen "answer" paketini tekrar WebSocket üzerinden React'a göndermek.
+1. React frontend'den gelen WebRTC "offer" (SDP) paketlerini almak.
+2. Bu teklifi doğrudan kendisine bağlı olan (Monster PC) "GPU Worker" WebSocket'ine iletmek.
+3. GPU'dan dönen "answer" paketini tekrar React'a göndermek.
 
 Kurulum:
     pip install -r requirements.txt
     uvicorn main:app --host 0.0.0.0 --port 8000
-
-Ortam Değişkenleri (.env):
-    GPU_WORKER_URL=https://<ngrok-id>.ngrok-free.app
 """
 
-import os
 import json
 import logging
-from contextlib import asynccontextmanager
-from typing import Dict, Set
-
 import httpx
-from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+from typing import Dict, Optional
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-# GPU Worker'ın Ngrok adresi — .env içinden okunur, runtime'da da değiştirilebilir
-GPU_WORKER_URL: str = os.getenv("GPU_WORKER_URL", "http://localhost:8001")
-
-# Bağlı istemcilerin WebSocket bağlantılarını tutan sözlük {client_id: websocket}
+# Sistemin durumu
 connected_clients: Dict[str, WebSocket] = {}
+gpu_worker_socket: Optional[WebSocket] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("=== Signaling Server başlatılıyor ===")
-    logger.info(f"GPU Worker URL: {GPU_WORKER_URL}")
+    logger.info("=== Signaling Server başlatılıyor (Ngrok-Free Mode) ===")
     yield
     logger.info("=== Signaling Server kapatılıyor ===")
 
 
 app = FastAPI(
     title="DeepFake Signaling Server",
-    description="WebRTC P2P bağlantısı için SDP/ICE sinyalizasyon sunucusu.",
-    version="2.0.0",
+    description="WebRTC P2P bağlantısı için ngrok'suz WebSocket relay sunucusu.",
+    version="3.0.0",
     lifespan=lifespan,
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],   # Production'da React uygulamanızın domain'i ile kısıtlayın
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-
-# ---------------------------------------------------------------------------
-# REST Endpoints
-# ---------------------------------------------------------------------------
-
 @app.get("/health")
 async def health_check():
-    """AWS Load Balancer / health check endpoint."""
-    return {"status": "ok", "gpu_worker_url": GPU_WORKER_URL}
-
-
-@app.post("/api/set-worker-url")
-async def set_worker_url(payload: dict):
-    """
-    Runtime'da GPU Worker URL'ini günceller (ör. Ngrok URL her başlatmada değişir).
-    Payload: { "url": "https://xxxx.ngrok-free.app" }
-    """
-    global GPU_WORKER_URL
-    new_url = payload.get("url", "").strip().rstrip("/")
-    if not new_url:
-        return {"error": "URL boş olamaz."}
-    GPU_WORKER_URL = new_url
-    logger.info(f"GPU Worker URL güncellendi: {GPU_WORKER_URL}")
-    return {"status": "updated", "gpu_worker_url": GPU_WORKER_URL}
-
+    return {
+        "status": "ok", 
+        "worker_connected": gpu_worker_socket is not None,
+        "clients_connected": len(connected_clients)
+    }
 
 # ---------------------------------------------------------------------------
-# WebSocket — Ana Sinyalizasyon Kanalı
+# GPU Worker Bağlantısı (Monster PC buraya bağlanacak)
 # ---------------------------------------------------------------------------
-
-@app.websocket("/ws/signal/{client_id}")
-async def signaling_endpoint(websocket: WebSocket, client_id: str):
-    """
-    React frontend buraya bağlanır.
-    Desteklenen mesaj tipleri:
-      - { "type": "offer",   "sdp": "...", "face_model": "face1" }  → GPU worker'a iletilir
-      - { "type": "ice_candidate", "candidate": {...} }              → GPU worker'a iletilir
-    
-    GPU Worker'dan dönen mesajlar:
-      - { "type": "answer",  "sdp": "..." }
-      - { "type": "ice_candidate", "candidate": {...} }
-    """
+@app.websocket("/ws/worker")
+async def worker_endpoint(websocket: WebSocket):
+    global gpu_worker_socket
     await websocket.accept()
-    connected_clients[client_id] = websocket
-    logger.info(f"İstemci bağlandı: {client_id}  (Toplam: {len(connected_clients)})")
+    
+    # Sadece 1 worker aktif olabilir (basitlik için)
+    if gpu_worker_socket is not None:
+        logger.warning("Eski worker bağlantısı kapatılıyor...")
+        try:
+            await gpu_worker_socket.close()
+        except: pass
+        
+    gpu_worker_socket = websocket
+    logger.info("🟢 GPU Worker bağlandı! Sistem hazır.")
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as http:
-            while True:
-                raw = await websocket.receive_text()
-                message = json.loads(raw)
-                msg_type = message.get("type")
+        while True:
+            raw = await websocket.receive_text()
+            message = json.loads(raw)
+            client_id = message.get("client_id")
+            
+            # GPU'dan gelen cevapları (answer/ice) doğru istemciye yönlendir
+            if client_id and client_id in connected_clients:
+                client_ws = connected_clients[client_id]
+                await client_ws.send_text(raw)
+                logger.info(f"[Worker -> İstemci {client_id}] Mesaj iletildi: {message.get('type')}")
+            else:
+                logger.warning(f"Bilinmeyen veya kopmuş istemciye (ID: {client_id}) Worker mesajı geldi.")
+    except WebSocketDisconnect:
+        logger.info("🔴 GPU Worker bağlantıyı kesti!")
+    except Exception as e:
+        logger.error(f"Worker hatası: {e}")
+    finally:
+        gpu_worker_socket = None
 
-                logger.info(f"[{client_id}] Mesaj alındı: type={msg_type}")
 
-                if msg_type == "offer":
-                    # SDP offer'ı GPU worker'a ilet ve answer'ı al
-                    payload = {
-                        "sdp":  message.get("sdp"),
-                        "type": "offer",
-                        "client_id":  client_id,
-                        "face_model": message.get("face_model", "face1"),
-                    }
-                    try:
-                        resp = await http.post(
-                            f"{GPU_WORKER_URL}/webrtc/offer",
-                            json=payload,
-                        )
-                        resp.raise_for_status()
-                        answer_data = resp.json()
+# ---------------------------------------------------------------------------
+# İstemci (React) Bağlantısı
+# ---------------------------------------------------------------------------
+@app.websocket("/ws/signal/{client_id}")
+async def signaling_endpoint(websocket: WebSocket, client_id: str):
+    await websocket.accept()
+    connected_clients[client_id] = websocket
+    logger.info(f"🔵 İstemci bağlandı: {client_id}  (Toplam: {len(connected_clients)})")
 
-                        # Answer'ı React'a geri gönder
-                        await websocket.send_text(json.dumps({
-                            "type": "answer",
-                            "sdp":  answer_data["sdp"],
-                        }))
-                        logger.info(f"[{client_id}] Answer gönderildi.")
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            message = json.loads(raw)
+            msg_type = message.get("type")
 
-                        # GPU'dan gelen ICE adayları varsa ilet
-                        for candidate in answer_data.get("ice_candidates", []):
-                            await websocket.send_text(json.dumps({
-                                "type":      "ice_candidate",
-                                "candidate": candidate,
-                            }))
+            logger.info(f"[{client_id}] Mesaj alındı: type={msg_type}")
 
-                    except httpx.HTTPError as e:
-                        logger.error(f"[{client_id}] GPU Worker'a erişilemedi: {e}")
-                        await websocket.send_text(json.dumps({
-                            "type":    "error",
-                            "message": f"GPU Worker'a erişilemedi: {str(e)}",
-                        }))
+            # React'tan gelen offer veya ice_candidate'i Worker'a forward et
+            if msg_type == "offer":
+                message["client_id"] = client_id
+                try:
+                    async with httpx.AsyncClient() as client:
+                        resp = await client.post("http://127.0.0.1:8001/webrtc/offer", json=message, timeout=15.0)
+                        if resp.status_code == 200:
+                            answer_data = resp.json()
+                            await websocket.send_text(json.dumps(answer_data))
+                            logger.info(f"[{client_id} <- Worker] HTTP Answer React'e iletildi.")
+                        else:
+                            print(f"Worker'dan hata döndü: {resp.text}")
+                except Exception as e:
+                    print(f"Worker'a ulaşılamadı: {e}")
+                    await websocket.send_text(json.dumps({"type": "error", "message": f"Worker'a ulaşılamadı: {e}"}))
 
-                elif msg_type == "ice_candidate":
-                    # ICE adayını GPU worker'a ilet (Trickle ICE)
-                    try:
-                        await http.post(
-                            f"{GPU_WORKER_URL}/webrtc/ice",
-                            json={
-                                "client_id": client_id,
-                                "candidate": message.get("candidate"),
-                            },
-                        )
-                    except httpx.HTTPError as e:
-                        logger.warning(f"[{client_id}] ICE iletilemedi: {e}")
+            elif msg_type == "ice_candidate":
+                message["client_id"] = client_id
+                try:
+                    async with httpx.AsyncClient() as client:
+                        await client.post("http://127.0.0.1:8001/webrtc/ice", json=message, timeout=5.0)
+                except Exception as e:
+                    print(f"Worker ICE endpoint'ine ulaşılamadı: {e}")
 
-                elif msg_type == "ping":
-                    await websocket.send_text(json.dumps({"type": "pong"}))
-
-                else:
-                    logger.warning(f"[{client_id}] Bilinmeyen mesaj tipi: {msg_type}")
+            elif msg_type == "ping":
+                await websocket.send_text(json.dumps({"type": "pong"}))
+            else:
+                logger.warning(f"[{client_id}] Bilinmeyen mesaj tipi: {msg_type}")
 
     except WebSocketDisconnect:
         logger.info(f"İstemci bağlantıyı kesti: {client_id}")

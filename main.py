@@ -1,123 +1,192 @@
+"""
+Monster PC - GPU Worker (v2 - Integrated & Optimized)
+=====================================================
+Kendi kendine yeten, asenkron ve AWS bulut ile doğrudan entegre olan ana sistem.
+VoiceCloner, FaceSwapper ve ConversationManager modüllerini ayağa kaldırır.
+
+Ngrok kullanmaz! AWS Signaling (34.224.38.75:8000) sunucusuna *doğrudan* 
+WebSocket Client olarak bağlanarak kendi portlarını veya tünellerini yönetmesine 
+gerek kalmadan, anında WebRTC Offer/Answer alışverişi yapar.
+
+Çalıştırmak için:
+    python main.py
+"""
+
+import asyncio
+import json
+import logging
 import os
-import argparse
-import mimetypes
+import weakref
+from typing import Dict
 
-# Fix Windows registry MIME type issues for CSS and JS
-mimetypes.add_type('text/css', '.css')
-mimetypes.add_type('application/javascript', '.js')
+import websockets
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceCandidate
+from aiortc.contrib.media import MediaRelay
 
-from flask import Flask, send_from_directory, make_response, request, jsonify
-from flask_socketio import SocketIO, emit
+# v2 Optimizasyonlu FaceSwap Track'ini gpu_worker altından al
+try:
+    from gpu_worker.rtc_worker import DeepFakeVideoTrack
+except ModuleNotFoundError:
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    from gpu_worker.rtc_worker import DeepFakeVideoTrack
+
 from modules.voice_cloning import VoiceCloner
-from modules.face_swap import FaceSwapper
 from modules.conversation import ConversationManager
-from dotenv import load_dotenv
-load_dotenv()
-app = Flask(__name__, static_folder='web')
-app.config['SECRET_KEY'] = 'secure_offline_mode!'
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
+# AWS Signaling Server Host Bilgisi (Yerel Test İçin Localhost)
+AWS_SIGNALING_WS_URL = "ws://localhost:8000/ws/worker"
 
-# Initialize Core Modules globally to keep them in memory
-print("Initializing Core Intelligence Modules...")
-voice_cloner = VoiceCloner()
-face_swapper = FaceSwapper()
-conv_manager = ConversationManager()
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+logger = logging.getLogger("MonsterWorker")
 
-# Global state for asynchronous frame processing
-processing_lock = False
+# Global aiortc relay (track çoklaması için idare eder)
+relay = MediaRelay()
+peer_connections: Dict[str, RTCPeerConnection] = {}
 
-@app.route('/')
-def index():
-    response = make_response(send_from_directory('web', 'index.html'))
-    # FR-6.6: Block direct integration with public auto-sharing platforms.
-    response.headers['X-Frame-Options'] = 'DENY'
-    response.headers['Content-Security-Policy'] = "frame-ancestors 'none';"
-    return response
+class SubsystemManager:
+    """Modüllerin bir kerede yüklenip havuzda tutulduğu yer."""
+    def __init__(self):
+        logger.info("=========================================")
+        logger.info("Monster GPU Worker Başlatılıyor...")
+        logger.info("=========================================")
+        
+        # Sadece import ediyoruz. Asıl başlatmalar async event loop içine alınabilir veya senkron başlatılabilir.
+        # FaceSwapper zaten DeepFakeVideoTrack çağrıldığında get_face_swapper() ile GPU üzerinde init olacak.
+        
+        logger.info("[1/3] ConversationManager başlatılıyor...")
+        self.conv = ConversationManager()
+        
+        logger.info("[2/3] VoiceCloner başlatılıyor...")
+        self.voice = VoiceCloner()
+        
+        logger.info("[3/3] FaceSwapper hazır kıta bekliyor (aiortc track gelince tetiklenecek).")
+        logger.info("=========================================")
 
-@app.route('/<path:path>')
-def serve_static(path):
-    return send_from_directory('web', path)
+subsystems = SubsystemManager()
 
-@app.route('/outputs/<path:filename>')
-def serve_outputs(filename):
-    """ Serve generated audio/video files """
-    return send_from_directory('outputs', filename)
+async def handle_webrtc_offer(ws: websockets.WebSocketClientProtocol, client_id: str, sdp: str, face_model: str):
+    """Buluttan gelen P2P (Peer-to-Peer) bağlantı talebini kabul et ve cevapla."""
+    logger.info(f"[{client_id}] Yeni WebRTC Offer alındı. Face Model: {face_model}")
 
-@app.route('/api/chat', methods=['POST'])
-def api_chat():
-    """
-    Endpoint mapping frontend chat to backend conversation module.
-    """
-    data = request.json
-    user_input = data.get('message', '')
-    persona = data.get('persona', 'formal')
-    rate = float(data.get('rate', 1.0))
-    pitch = int(data.get('pitch', 0))
-    emotion = data.get('emotion', 'neutral')
-    
-    # 1. Update active persona
-    conv_manager.set_persona(persona)
-    
-    # 2. Get AI response and securely log it
-    ai_response = conv_manager.get_response(user_input)
-    
-    # 3. Generate Audio using TTS with requested controls
-    audio_file = voice_cloner.clone_voice(
-        target_text=ai_response, 
-        rate=rate, 
-        pitch=pitch, 
-        emotion=emotion
-    )
-    audio_url = f"/outputs/{audio_file}" if audio_file else None
-    
-    return jsonify({"response": ai_response, "audio_url": audio_url})
+    if client_id in peer_connections:
+        await peer_connections[client_id].close()
 
-@socketio.on('video_frame')
-def handle_video_frame(data):
-    """
-    FR-2.10: Handle real-time video frames from frontend, run Face Swap, and return swapped frame.
-    Uses an asynchronous-like approach by skipping frames if previous processing is still ongoing.
-    """
-    global processing_lock
-    
-    if processing_lock:
-        # Önceki kare hala işleniyor, bu kareyi atla (gecikmeyi önlemek için)
+    pc = RTCPeerConnection()
+    peer_connections[client_id] = pc
+
+    @pc.on("icecandidate")
+    def on_ice_candidate(candidate):
+        if candidate:
+            asyncio.ensure_future(ws.send(json.dumps({
+                "type": "ice_candidate",
+                "client_id": client_id,
+                "candidate": {
+                    "candidate": candidate.candidate,
+                    "sdpMid": candidate.sdpMid,
+                    "sdpMLineIndex": candidate.sdpMLineIndex,
+                }
+            })))
+
+    @pc.on("connectionstatechange")
+    async def on_connection_state_change():
+        logger.info(f"[{client_id}] P2P Bağlantı durumu: {pc.connectionState}")
+        if pc.connectionState in ("failed", "closed"):
+            await pc.close()
+            peer_connections.pop(client_id, None)
+
+    @pc.on("track")
+    def on_track(track):
+        logger.info(f"[{client_id}] Medya Akışı Geldi: {track.kind}")
+        
+        if track.kind == "video":
+            # Optimizasyonlu (Face BBox Caching ve Adaptive Skip) GPU track'imizi araya sokuyoruz
+            deep_fake_track = DeepFakeVideoTrack(
+                relay.subscribe(track),
+                face_model=face_model,
+            )
+            pc.addTrack(deep_fake_track)
+            logger.info(f"[{client_id}] DeepFakeVideoTrack GPU hattına bağlandı.")
+        elif track.kind == "audio":
+            # Gelecekte VoiceCloneModule ile sesi de manipüle edip geri döneceğiz
+            # Şimdilik yankıyı önlemek adına pass-through yapmıyoruz
+            pass
+
+    # SDP Offer'ı RTCSessionDescription olarak al
+    offer = RTCSessionDescription(sdp=sdp, type="offer")
+    await pc.setRemoteDescription(offer)
+
+    # İşleyiciyi ayağa kaldırıp SDP Answer üret
+    answer = await pc.createAnswer()
+    await pc.setLocalDescription(answer)
+
+    # Signaling (AWS) üzerinden React Client'a Answer dön
+    await ws.send(json.dumps({
+        "type": "answer",
+        "client_id": client_id,
+        "sdp": pc.localDescription.sdp
+    }))
+    logger.info(f"[{client_id}] SDP Answer, AWS üzerinden istemciye iletildi.")
+
+async def handle_ice_candidate(client_id: str, candidate_data: dict):
+    if client_id not in peer_connections:
         return
+        
+    pc = peer_connections[client_id]
+    try:
+        candidate = RTCIceCandidate(
+            component=candidate_data.get("component", 1),
+            foundation=candidate_data.get("foundation", ""),
+            ip=candidate_data.get("ip", ""),
+            port=int(candidate_data.get("port", 0)),
+            priority=int(candidate_data.get("priority", 0)),
+            protocol=candidate_data.get("protocol", "udp"),
+            type=candidate_data.get("type", "host"),
+            sdpMid=candidate_data.get("sdpMid"),
+            sdpMLineIndex=candidate_data.get("sdpMLineIndex"),
+        )
+        await pc.addIceCandidate(candidate)
+    except Exception as e:
+        logger.warning(f"[{client_id}] ICE işleme hatası: {e}")
 
-    image_data = data.get('image')
-    face_model = data.get('face_model', 'face1')
+async def run_worker():
+    """AWS ile WebSocket üzerinden sonsuz asenkron el sıkışma (signaling) döngüsü."""
+    logger.info(f"AWS Sunucusuna ({AWS_SIGNALING_WS_URL}) bağlanılıyor...")
     
-    if not image_data:
-        return
-
-    # Request nesnesinden sid bilgisini iş parçacığı dışına taşıyoruz
-    from flask import request as flask_request
-    target_sid = flask_request.sid
-
-    def process_and_emit(img, model, sid):
-        global processing_lock
-        processing_lock = True
+    while True:
         try:
-            # Face Swap işlemini yap
-            processed_image = face_swapper.process_frame(img, model)
-            # SocketIO üzerinden sadece ilgili kullanıcıya (sid) geri gönder
-            socketio.emit('processed_frame', {'image': processed_image}, room=sid)
+            async with websockets.connect(AWS_SIGNALING_WS_URL) as ws:
+                logger.info("✅ AWS Sunucusu ile doğrudan bağlantı kuruldu. Ngrok'suz mod aktif.")
+                logger.info("Buluttan gelecek yüz değiştirme (WebRTC) talepleri bekleniyor...")
+                
+                async for message in ws:
+                    data = json.loads(message)
+                    msg_type = data.get("type")
+                    client_id = data.get("client_id")
+                    
+                    if not client_id:
+                        continue
+                        
+                    if msg_type == "offer":
+                        face_model = data.get("face_model", "face1")
+                        sdp = data.get("sdp")
+                        # Asenkron çalıştır ki ana WS döngüsü bloklanmasın
+                        asyncio.create_task(handle_webrtc_offer(ws, client_id, sdp, face_model))
+                        
+                    elif msg_type == "ice_candidate":
+                        candidate = data.get("candidate")
+                        if candidate:
+                            asyncio.create_task(handle_ice_candidate(client_id, candidate))
+
+        except websockets.exceptions.ConnectionClosed:
+            logger.warning("AWS Sunucusu ile bağlantı koptu. 3 saniye sonra yeniden denenecek...")
         except Exception as e:
-            print(f"Frame Processing Error: {e}")
-        finally:
-            processing_lock = False
-
-    # Arka planda çalıştır
-    socketio.start_background_task(process_and_emit, image_data, face_model, target_sid)
-
-def main():
-    print("AI-Based Deepfake Interaction System Intialized")
-    print("Modules loaded successfully. Starting Local Server on http://127.0.0.1:5000")
-    
-    # Run server locally (prevents public auto-sharing by default)
-    # Note: debug=True will autoreload when this file saves
-    socketio.run(app, host='127.0.0.1', port=5000, debug=True, use_reloader=False)
+            logger.error(f"Bağlantı Hatası: {e}. 3 saniye sonra yeniden denenecek...")
+            
+        await asyncio.sleep(3)
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(run_worker())
+    except KeyboardInterrupt:
+        logger.info("Sistem kullanıcı tarafından kapatıldı.")
