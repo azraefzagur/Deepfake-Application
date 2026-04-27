@@ -11,3 +11,9 @@ pip_error.txt
 *.onnx
 *.pth
 *.pt
+# Kurulumlar ve Yeni Sanal Ortamlar
+venv/
+*.whl
+*.zip
+*.exe
+pip_out*.txt
