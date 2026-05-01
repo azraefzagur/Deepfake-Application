@@ -54,6 +54,13 @@ relay = MediaRelay()
 async def lifespan(app: FastAPI):
     logger.info("=== GPU Worker başlatılıyor ===")
     logger.info(f"GPU: CUDA desteği kontrol ediliyor...")
+    try:
+        from rtc_worker import get_face_swapper
+        logger.info("GPU Modelleri önceden belleğe yükleniyor (Isınma turu)...")
+        get_face_swapper()
+    except Exception as e:
+        logger.error(f"GPU Modelleri yüklenirken hata: {e}")
+        
     yield
     # Sunucu kapanırken tüm peer bağlantılarını kapat
     logger.info("Tüm WebRTC bağlantıları kapatılıyor...")

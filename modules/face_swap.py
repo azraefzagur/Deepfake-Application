@@ -2,6 +2,27 @@ import cv2
 import base64
 import numpy as np
 import os
+import sys
+import glob
+
+# ONNXRuntime-GPU için CUDA/cuDNN DLL yollarını dinamik olarak PATH'e ekle
+try:
+    site_packages = os.path.join(sys.prefix, 'Lib', 'site-packages')
+    if os.path.exists(site_packages):
+        nvidia_bins = glob.glob(os.path.join(site_packages, 'nvidia', '*', 'bin'))
+        torch_lib = os.path.join(site_packages, 'torch', 'lib')
+        dll_paths = nvidia_bins + [torch_lib]
+        for p in dll_paths:
+            if os.path.exists(p):
+                os.environ['PATH'] = p + os.pathsep + os.environ.get('PATH', '')
+                if hasattr(os, 'add_dll_directory'):
+                    try:
+                        os.add_dll_directory(p)
+                    except Exception:
+                        pass
+except Exception as e:
+    print(f"BİLGİ: DLL yolu ekleme sırasında hata: {e}")
+
 import insightface
 from insightface.app import FaceAnalysis
 
@@ -30,8 +51,12 @@ class FaceSwapper:
             # Ortam değişkenlerini ayarla (bazı durumlarda onnxruntime için gerekli olabilir)
             os.environ['ORT_CUDA_FLAGS'] = '1'
             
-            # Providers listesi: Önce CUDA, sonra CPU
-            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            # Providers listesi: Önce CUDA (optimize edilmiş ayarlarla), sonra CPU
+            cuda_options = {
+                'cudnn_conv_algo_search': 'DEFAULT',
+                'arena_extend_strategy': 'kSameAsRequested',
+            }
+            providers = [('CUDAExecutionProvider', cuda_options), 'CPUExecutionProvider']
             
             try:
                 print("FaceAnalysis (Detection) başlatılıyor...")
@@ -47,7 +72,7 @@ class FaceSwapper:
             model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data', 'models', 'inswapper_128.onnx')
             if os.path.exists(model_path):
                 try:
-                    self.swapper = insightface.model_zoo.get_model(model_path, download=False, download_zip=False, providers=['CUDAExecutionProvider'])
+                    self.swapper = insightface.model_zoo.get_model(model_path, download=False, download_zip=False, providers=[('CUDAExecutionProvider', cuda_options)])
                     print("BAŞARI: Inswapper modeli CUDA ile başlatıldı.")
                 except Exception as cuda_e:
                     print(f"BİLGİ: Inswapper CUDA ile başlatılamadı ({cuda_e}). CPU'ya geçiliyor...")

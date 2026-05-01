@@ -241,22 +241,26 @@ class DeepFakeVideoTrack(MediaStreamTrack):
     async def recv(self) -> av.VideoFrame:
         """
         aiortc her yeni kare için bu metodu çağırır.
-        AdaptiveFrameDropper karar verir: işle veya son kareyi tekrarla.
+        Gecikmeyi (latency) önlemek için AdaptiveFrameDropper kullanılarak
+        GPU aşırı yüklendiğinde bazı karelerin işlenmesi atlanır.
         """
         frame: av.VideoFrame = await self._track.recv()
         self._stats_frame_count += 1
 
-        if self._frame_dropper.should_process():
-            img = videoframe_to_ndarray(frame)
-            processed = await asyncio.get_event_loop().run_in_executor(
-                None,
-                self._process_with_cache,
-                img,
-            )
-            self._last_processed = processed
-        else:
-            processed = self._last_processed if self._last_processed is not None \
-                        else videoframe_to_ndarray(frame)
+        # Eğer adaptif dropper bu kareyi atlamamız gerektiğini söylüyorsa,
+        # gecikme (latency) oluşturmamak için GPU'yu es geç ve son kareyi ver.
+        if not self._frame_dropper.should_process():
+            if self._last_processed is not None:
+                return ndarray_to_videoframe(self._last_processed, frame.pts, frame.time_base)
+            return frame
+
+        img = videoframe_to_ndarray(frame)
+        processed = await asyncio.get_event_loop().run_in_executor(
+            None,
+            self._process_with_cache,
+            img,
+        )
+        self._last_processed = processed
 
         # Periyodik istatistik logu (her ~30sn)
         elapsed = time.monotonic() - self._stats_start_time

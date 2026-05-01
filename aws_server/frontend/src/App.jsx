@@ -17,21 +17,21 @@ import VideoTile from './components/VideoTile';
 
 // Mevcut yüz modelleri
 const FACE_MODELS = [
-  { id: 'face1', label: 'Yüz 1', emoji: '🧑' },
-  { id: 'face2', label: 'Yüz 2', emoji: '👩' },
-  { id: 'face3', label: 'Yüz 3', emoji: '🧔' },
-  { id: 'face4', label: 'Yüz 4', emoji: '👱' },
-  { id: 'face5', label: 'Yüz 5', emoji: '🧓' },
-  { id: 'face6', label: 'Yüz 6', emoji: '👨‍🦰' },
+  { id: 'face1', label: 'Brad Pitt', emoji: '🧑' },
+  { id: 'face2', label: 'Kıvanç Tatlıtuğ', emoji: '👩' },
+  { id: 'face3', label: 'Azra', emoji: '🧔' },
+  { id: 'face4', label: 'Hande Erçel', emoji: '👱' },
+  { id: 'face5', label: 'Burak Özçivit', emoji: '🧓' },
+  { id: 'face6', label: 'Aras Bulut İynemli', emoji: '👨‍🦰' },
 ];
 
 // Bağlantı durumu -> Türkçe metin + dot class
 const STATE_MAP = {
-  idle:        { text: 'Bağlantı bekleniyor',    dotClass: 'status-dot--idle' },
-  connecting:  { text: 'Bağlanıyor…',            dotClass: 'status-dot--connecting' },
-  connected:   { text: 'P2P Bağlandı — WebRTC',  dotClass: 'status-dot--connected' },
-  failed:      { text: 'Bağlantı başarısız',      dotClass: 'status-dot--error' },
-  closed:      { text: 'Bağlantı kapatıldı',      dotClass: 'status-dot--idle' },
+  idle: { text: 'Bağlantı bekleniyor', dotClass: 'status-dot--idle' },
+  connecting: { text: 'Bağlanıyor…', dotClass: 'status-dot--connecting' },
+  connected: { text: 'P2P Bağlandı — WebRTC', dotClass: 'status-dot--connected' },
+  failed: { text: 'Bağlantı başarısız', dotClass: 'status-dot--error' },
+  closed: { text: 'Bağlantı kapatıldı', dotClass: 'status-dot--idle' },
 };
 
 // Benzersiz istemci ID'si (her sayfa yüklemesinde yeni)
@@ -41,9 +41,9 @@ const CLIENT_ID = crypto.randomUUID?.() ?? `client-${Date.now()}`;
 const SIGNALING_URL = import.meta.env.VITE_SIGNALING_WS_URL ?? 'ws://localhost:8000';
 
 export default function App() {
-  const [faceModel,    setFaceModel]    = useState('face1');
+  const [faceModel, setFaceModel] = useState('face1');
   const [signalingUrl, setSignalingUrl] = useState(SIGNALING_URL);
-  const [urlInput,     setUrlInput]     = useState(SIGNALING_URL);
+  const [urlInput, setUrlInput] = useState(SIGNALING_URL);
 
   // ── useMediaConstraints — Çözünürlük/FPS kısıtları ──
   const { preset, setPreset, constraints, applyToStream, profile } = useMediaConstraints();
@@ -58,7 +58,7 @@ export default function App() {
   const { modules, moduleRegistry, toggleModule, moduleEvent } = useAsyncModules();
 
   const stateInfo = STATE_MAP[connectionState] ?? STATE_MAP.idle;
-  const isActive  = connectionState === 'connected' || connectionState === 'connecting';
+  const isActive = connectionState === 'connected' || connectionState === 'connecting';
 
   const handleConnect = () => {
     setSignalingUrl(urlInput.trim());
@@ -289,13 +289,13 @@ export default function App() {
           {/* Mimari Bilgisi */}
           <div className="glass-card" style={{ fontSize: '0.75rem', color: 'var(--clr-text-muted)', lineHeight: 1.7 }}>
             <p className="sidebar__section-title">Mimari</p>
-            <p>🌐 <strong style={{color:'var(--clr-text-primary)'}}>AWS t2.micro</strong><br/>
-              React UI + FastAPI Signaling<br/>
+            <p>🌐 <strong style={{ color: 'var(--clr-text-primary)' }}>AWS t2.micro</strong><br />
+              React UI + FastAPI Signaling<br />
               Video verisi geçmez.</p>
-            <p style={{marginTop: 8}}>
-              🖥️ <strong style={{color:'var(--clr-text-primary)'}}>Yerel GPU</strong><br/>
-              FastAPI + aiortc + CUDA<br/>
-              Face-Cache + Adaptif Skip<br/>
+            <p style={{ marginTop: 8 }}>
+              🖥️ <strong style={{ color: 'var(--clr-text-primary)' }}>Yerel GPU</strong><br />
+              FastAPI + aiortc + CUDA<br />
+              Face-Cache + Adaptif Skip<br />
               Ngrok ile dışarıya açıktır.
             </p>
           </div>

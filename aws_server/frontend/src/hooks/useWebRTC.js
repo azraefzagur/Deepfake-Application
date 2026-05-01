@@ -166,10 +166,10 @@ export function useWebRTC(signalingUrl, clientId, faceModel, mediaConstraints) {
     setConnectionState('connecting');
 
     try {
-      // 1. Kameraya eriş — dışarıdan gelen mediaConstraints kullanılır
+      // 1. Kameraya eriş — dışarıdan gelen mediaConstraints kullanılır, FPS limiti kaldırıldı
       const stream = await navigator.mediaDevices.getUserMedia(
         mediaConstraints ?? {
-          video: { width: { ideal: 854 }, height: { ideal: 480 }, frameRate: { ideal: 15 } },
+          video: { width: { ideal: 854 }, height: { ideal: 480 } },
           audio: false,
         }
       );
@@ -253,9 +253,9 @@ export function useWebRTC(signalingUrl, clientId, faceModel, mediaConstraints) {
         }
       };
 
-      // 4. SDP Offer oluştur, bant genişliğini sınırla ve gönder
+      // 4. SDP Offer oluştur, bant genişliğini sınırla ve gönder (Yüksek FPS için arttırıldı)
       const offer = await pc.createOffer();
-      offer.sdp = limitBandwidthInSDP(offer.sdp, 800);
+      offer.sdp = limitBandwidthInSDP(offer.sdp, 2500);
       await pc.setLocalDescription(offer);
 
       ws.send(JSON.stringify({

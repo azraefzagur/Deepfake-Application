@@ -15,10 +15,10 @@ import { useState, useCallback, useRef, useMemo } from 'react';
 
 // ────── Ön Tanımlı Profiller ──────
 export const QUALITY_PRESETS = {
-  low:    { label: 'Düşük (320p / 12fps)',  width: 426,  height: 320, fps: 12 },
-  medium: { label: 'Orta (480p / 15fps)',   width: 854,  height: 480, fps: 15 },
-  high:   { label: 'Yüksek (480p / 20fps)', width: 854,  height: 480, fps: 20 },
-  hd:     { label: 'HD (720p / 24fps)',      width: 1280, height: 720, fps: 24 },
+  low:    { label: 'Düşük (320p)',  width: 426,  height: 320 },
+  medium: { label: 'Orta (480p)',   width: 854,  height: 480 },
+  high:   { label: 'Yüksek (480p)', width: 854,  height: 480 },
+  hd:     { label: 'HD (720p)',      width: 1280, height: 720 },
 };
 
 const DEFAULT_PRESET = 'medium';
@@ -41,7 +41,7 @@ export function useMediaConstraints() {
     video: {
       width:     { ideal: profile.width,  max: profile.width },
       height:    { ideal: profile.height, max: profile.height },
-      frameRate: { ideal: profile.fps,    max: profile.fps },
+      // fps kısıtlaması kaldırıldı
       // Ekstra: donanım hızlandırma tercihini zorla
       facingMode: 'user',
     },
@@ -62,7 +62,6 @@ export function useMediaConstraints() {
       await videoTrack.applyConstraints({
         width:     { ideal: profile.width,  max: profile.width },
         height:    { ideal: profile.height, max: profile.height },
-        frameRate: { ideal: profile.fps,    max: profile.fps },
       });
       streamRef.current = stream;
       return true;
@@ -88,7 +87,6 @@ export function useMediaConstraints() {
         track.applyConstraints({
           width:     { ideal: p.width,  max: p.width },
           height:    { ideal: p.height, max: p.height },
-          frameRate: { ideal: p.fps,    max: p.fps },
         }).catch(() => {});
       }
     }
