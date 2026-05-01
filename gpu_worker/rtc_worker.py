@@ -280,7 +280,7 @@ class DeepFakeVideoTrack(MediaStreamTrack):
 
         try:
             if self._swapper.app is None or self._swapper.swapper is None or self._swapper.source_face is None:
-                return img
+                return self._swapper.process_frame_raw(img)
 
             # ── Face Detection (cached) ──
             if self._bbox_cache.should_detect():

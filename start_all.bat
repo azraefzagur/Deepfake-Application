@@ -1,19 +1,44 @@
 @echo off
+setlocal
+
+set "ROOT=%~dp0"
+set "VENV=%ROOT%.venv39\Scripts\python.exe"
+set "MPLCONFIGDIR=%ROOT%.matplotlib"
+set "ALBUMENTATIONS_DISABLE_VERSION_CHECK=1"
+
+if not exist "%VENV%" (
+    echo Python 3.9 virtual environment not found:
+    echo %VENV%
+    echo.
+    echo Create it first:
+    echo cd /d "%ROOT%"
+    echo py -3.9 -m venv .venv39
+    pause
+    exit /b 1
+)
+
+if not exist "%MPLCONFIGDIR%" mkdir "%MPLCONFIGDIR%"
+
 echo ===================================================
-echo Starting DeepFake Services...
+echo Starting DeepFake Services from:
+echo %ROOT%
 echo ===================================================
 
 echo.
-echo [1/3] Starting GPU Worker (RTX 3050 Ti)...
-start "GPU Worker" powershell -NoExit -Command "cd C:\DeepFake\gpu_worker; .\venv\Scripts\activate; $env:PATH = 'C:\DeepFake\gpu_worker\venv\Lib\site-packages\nvidia\cudnn\bin;C:\DeepFake\gpu_worker\venv\Lib\site-packages\torch\lib;' + $env:PATH; .\start_worker.bat"
+echo [1/3] Starting GPU Worker API on http://127.0.0.1:8001
+start "DeepFake GPU Worker" powershell -NoExit -Command "$env:MPLCONFIGDIR='%MPLCONFIGDIR%'; $env:ALBUMENTATIONS_DISABLE_VERSION_CHECK='1'; cd '%ROOT%gpu_worker'; '%VENV%' -m uvicorn api:app --host 127.0.0.1 --port 8001"
 
-echo [2/3] Starting Signaling Server...
-start "Signaling Server" powershell -NoExit -Command "cd C:\DeepFake\aws_server\signaling; ..\venv\Scripts\activate; uvicorn main:app --host 0.0.0.0 --port 8000"
+echo [2/3] Starting Signaling Server on http://127.0.0.1:8000
+start "DeepFake Signaling" powershell -NoExit -Command "$env:MPLCONFIGDIR='%MPLCONFIGDIR%'; $env:ALBUMENTATIONS_DISABLE_VERSION_CHECK='1'; cd '%ROOT%aws_server\signaling'; '%VENV%' -m uvicorn main:app --host 127.0.0.1 --port 8000"
 
-echo [3/3] Starting React Frontend...
-start "React Frontend" powershell -NoExit -Command "cd C:\DeepFake\aws_server\frontend; npm run dev"
+echo [3/3] Starting React Frontend on http://127.0.0.1:3000
+start "DeepFake Frontend" powershell -NoExit -Command "cd '%ROOT%aws_server\frontend'; npm run dev -- --host 127.0.0.1 --port 3000"
 
 echo.
-echo All services have been launched in separate PowerShell windows!
-echo You can minimize them once you see the successful startup messages.
+echo Open this in your browser:
+echo http://127.0.0.1:3000/
+echo.
+echo In the frontend, use this signaling URL:
+echo ws://127.0.0.1:8000
 echo ===================================================
+pause

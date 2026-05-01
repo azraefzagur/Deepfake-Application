@@ -23,8 +23,16 @@ try:
 except Exception as e:
     print(f"BİLGİ: DLL yolu ekleme sırasında hata: {e}")
 
-import insightface
-from insightface.app import FaceAnalysis
+try:
+    import insightface
+    from insightface.app import FaceAnalysis
+    INSIGHTFACE_AVAILABLE = True
+    print("InsightFace available - using advanced face swapping")
+except ImportError:
+    insightface = None
+    FaceAnalysis = None
+    INSIGHTFACE_AVAILABLE = False
+    print("InsightFace not available - using OpenCV/pass-through fallback")
 
 class FaceSwapper:
     def __init__(self):
@@ -44,6 +52,10 @@ class FaceSwapper:
         self.app = None
         self.swapper = None
         
+        if not INSIGHTFACE_AVAILABLE:
+            print("FaceSwapper: InsightFace not available, advanced swap disabled")
+            return
+
         try:
             # 1. Initialize FaceAnalysis for detecting faces
             print("FaceAnalysis modelleri yükleniyor (CUDA öncelikli)...")
@@ -88,9 +100,11 @@ class FaceSwapper:
             print(f"KRİTİK HATA - InsightFace Yüklenemedi: {e}")
 
     def _load_source_face(self, image_path):
-        """ Extract the 512D face embeddings from the target image. """
+        """Extract face embeddings in InsightFace mode, or return the image path in fallback mode."""
         if not os.path.exists(image_path):
             return None
+        if not INSIGHTFACE_AVAILABLE or self.app is None:
+            return image_path
         img = cv2.imread(image_path)
         if img is None:
             return None
@@ -135,6 +149,8 @@ class FaceSwapper:
                 # Sadece bir yüzü (kullanıcıyı) analiz et ve değiştir
                 if len(faces) > 0:
                     img = self.swapper.get(img, faces[0], self.source_face, paste_back=True)
+            elif isinstance(self.source_face, str):
+                img = self.basic_face_swap(img)
             
             # 3. FR-2.11 Kalıcı filigran (Watermark)
             cv2.putText(img, "AI GENERATED - DEEPFAKE", (15, 30), 
@@ -180,4 +196,29 @@ class FaceSwapper:
 
         except Exception as e:
             print(f"process_frame_raw Hatası: {e}")
+            return img
+
+    def basic_face_swap(self, img: np.ndarray) -> np.ndarray:
+        """Very small OpenCV fallback used when InsightFace is not installed."""
+        try:
+            if not isinstance(self.source_face, str):
+                return img
+
+            source_img = cv2.imread(self.source_face)
+            if source_img is None:
+                return img
+
+            face_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+            )
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            faces = face_cascade.detectMultiScale(gray, 1.1, 4)
+            if len(faces) == 0:
+                return img
+
+            x, y, w, h = faces[0]
+            img[y:y + h, x:x + w] = cv2.resize(source_img, (w, h))
+            return img
+        except Exception as e:
+            print(f"Basic face swap error: {e}")
             return img
