@@ -1,96 +1,59 @@
 import os
-import numpy as np
-import scipy.io.wavfile as wavfile
-import librosa
-import soundfile as sf
+import httpx
 from datetime import datetime
-from gtts import gTTS
 
 class VoiceCloner:
     def __init__(self):
         """
-        Initialize the voice cloning model. (FR-1.1 & FR-1.2)
-        Uses a lightweight engine architecture to satisfy the Dual-core CPU constraints.
+        Microservice client for XTTSv2 Voice Cloning.
+        Relies on the tts_service running on localhost:8002.
         """
-        self.available_models = {
-            "voice1": "M. Freeman (Deep Voice Model)",
-            "voice2": "S. Johansson (Smooth Voice Model)"
-        }
-        self.active_model = self.available_models["voice1"]
-        self.sample_rate = 22050
-        print("VoiceCloner module initialized securely.")
-
-    def select_model(self, model_id):
-        """
-        FR-1.1: The system shall provide a selection of pre-trained celebrity voice models.
-        """
-        if model_id in self.available_models:
-            self.active_model = self.available_models[model_id]
-            print(f"Voice model selected: {self.active_model}")
-            return True
-        return False
-
-    def clone_voice(self, target_text, rate=1.0, pitch=0, emotion='neutral'):
-        """
-        FR-1.3 to FR-1.6, FR-1.10: Convert text into synthesized speech using gTTS.
-        Manipulates audio with librosa (Rate, Pitch, Watermark) and returns the WAV filename.
-        """
-        if not self.active_model:
-            raise ValueError("No voice model selected.")
+        self.tts_service_url = "http://127.0.0.1:8002/generate-audio/"
         
-        print(f"Synthesizing speech: '{target_text}' | Emotion: {emotion} | Rate: {rate} | Pitch: {pitch}")
+        # Referans ses dosyalarının bulunacağı dizin
+        self.reference_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "tts_service", "references")
+        os.makedirs(self.reference_dir, exist_ok=True)
+        print("VoiceCloner (Microservice Client) initialized with dynamic voices.")
+
+    async def clone_voice(self, target_text, persona="kayit_1", rate=1.0, pitch=0, emotion='neutral'):
+        """
+        Sends an async HTTP POST request to the local TTS microservice.
+        """
+        print(f"Requesting voice clone from Microservice: '{target_text}' | Persona: {persona}")
         
+        # Dinamik olarak persona adına göre (.wav) dosyasını bul (Örn: kayit_1.wav)
+        reference_path = os.path.join(self.reference_dir, f"{persona}.wav")
+        
+        if not os.path.exists(reference_path):
+            print(f"Uyarı: {reference_path} bulunamadı! İşlem iptal ediliyor.")
+            return None
+
         output_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "outputs")
         os.makedirs(output_dir, exist_ok=True)
         
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        temp_mp3 = os.path.join(output_dir, f"temp_{timestamp}.mp3")
         final_wav = f"voice_{timestamp}.wav"
         final_path = os.path.join(output_dir, final_wav)
         
+        payload = {
+            "text": target_text,
+            "reference_audio_path": reference_path,
+            "output_path": final_path,
+            "language": "tr" # Desteklenen dil
+        }
+        
         try:
-            # 1. Generate base speech with gTTS
-            tts = gTTS(text=target_text, lang='en')
-            tts.save(temp_mp3)
-            
-            # 2. Load with Librosa for manipulation
-            y, sr = librosa.load(temp_mp3, sr=22050)
-            
-            # 3. Apply Time Stretch (FR-1.4)
-            if rate != 1.0:
-                y = librosa.effects.time_stretch(y=y, rate=rate)
+            # XTTSv2 GPU'da saniyeler sürebilir
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(self.tts_service_url, json=payload)
                 
-            # 4. Apply Pitch Shift (FR-1.5)
-            if pitch != 0:
-                y = librosa.effects.pitch_shift(y=y, sr=sr, n_steps=pitch)
-                
-            # 5. Apply Emotion modifications conceptually (FR-1.6)
-            if emotion == 'happy':
-                y = librosa.effects.pitch_shift(y=y, sr=sr, n_steps=2) # Higher pitch for happy
-            elif emotion == 'serious':
-                y = librosa.effects.time_stretch(y=y, rate=0.9) # Slower for serious
-                y = librosa.effects.pitch_shift(y=y, sr=sr, n_steps=-2)
-                
-            # 6. Apply Inaudible Watermark (FR-1.10)
-            y = self._embed_watermark(y, sr)
-            
-            # 7. Export as WAV (FR-1.9)
-            sf.write(final_path, y, sr)
-            
-            # Clean up temp
-            if os.path.exists(temp_mp3):
-                os.remove(temp_mp3)
-                
-            print(f"Audio manipulated and saved as {final_wav}")
-            return final_wav
+                if response.status_code == 200:
+                    data = response.json()
+                    print(f"Microservice Success: Audio saved at {data['output_path']}")
+                    return final_wav
+                else:
+                    print(f"Microservice Error: {response.text}")
+                    return None
         except Exception as e:
-            print(f"Librosa Manipulation Error (fallback to basic MP3): {e}")
-            if os.path.exists(temp_mp3):
-                return os.path.basename(temp_mp3)
+            print(f"Microservice Connection Error (Is it running on 8002?): {e}")
             return None
-
-    def _embed_watermark(self, audio_data, sr=22050):
-        """ FR-1.10: Embed a 15kHz inaudible sine wave watermark """
-        t = np.arange(len(audio_data)) / sr
-        watermark = 0.005 * np.sin(2 * np.pi * 15000 * t) 
-        return audio_data + watermark

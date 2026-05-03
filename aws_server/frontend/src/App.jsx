@@ -9,7 +9,7 @@
  *   - Asenkron modül paneli (ses klonlama / toplantı kaydı / ekran paylaşımı)
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useWebRTC } from './hooks/useWebRTC';
 import { useMediaConstraints, QUALITY_PRESETS } from './hooks/useMediaConstraints';
 import { useAsyncModules } from './hooks/useAsyncModules';
@@ -45,6 +45,20 @@ export default function App() {
   const [signalingUrl, setSignalingUrl] = useState(SIGNALING_URL);
   const [urlInput, setUrlInput] = useState(SIGNALING_URL);
 
+  // ── Ses Simülasyonu Ayarları ──
+  const [voiceModel, setVoiceModel] = useState('');
+  const [customVoices, setCustomVoices] = useState([]);
+  const [speakingRate, setSpeakingRate] = useState(1.0);
+  const [pitchAdjustment, setPitchAdjustment] = useState(0);
+  const [emotion, setEmotion] = useState('neutral');
+  const [isLiveMic, setIsLiveMic] = useState(false);
+
+  // ── Chat Ayarları ──
+  const [chatInput, setChatInput] = useState('');
+  const [chatHistory, setChatHistory] = useState([
+    { type: 'system', text: 'System: Interaction initialized. Chat is secure.' }
+  ]);
+
   // ── useMediaConstraints — Çözünürlük/FPS kısıtları ──
   const { preset, setPreset, constraints, applyToStream, profile } = useMediaConstraints();
 
@@ -60,6 +74,21 @@ export default function App() {
   const stateInfo = STATE_MAP[connectionState] ?? STATE_MAP.idle;
   const isActive = connectionState === 'connected' || connectionState === 'connecting';
 
+  useEffect(() => {
+    // Sunucudan mevcut ses kayıtlarını çek
+    fetch('http://localhost:8001/api/voices')
+      .then(res => res.json())
+      .then(data => {
+        if (data.voices) {
+          setCustomVoices(data.voices);
+          if (data.voices.length > 0) {
+            setVoiceModel(data.voices[0]);
+          }
+        }
+      })
+      .catch(err => console.error("Ses listesi alınamadı:", err));
+  }, []);
+
   const handleConnect = () => {
     setSignalingUrl(urlInput.trim());
     startConnection();
@@ -69,6 +98,105 @@ export default function App() {
   const handlePresetChange = (newPreset) => {
     setPreset(newPreset);
     if (localStream) applyToStream(localStream);
+  };
+
+  const handleSendChat = async () => {
+    if (!chatInput.trim()) return;
+    const msg = chatInput.trim();
+    setChatHistory(prev => [...prev, { type: 'user', text: msg }]);
+    setChatInput('');
+    
+    setChatHistory(prev => [...prev, { type: 'system', text: 'AI düşünüyor ve ses sentezleniyor...' }]);
+
+    try {
+      const response = await fetch('http://localhost:8001/api/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ 
+          message: msg, 
+          persona: voiceModel,
+          rate: speakingRate, 
+          pitch: pitchAdjustment, 
+          emotion: emotion 
+        })
+      });
+
+      if (!response.ok) throw new Error('API yanıt vermedi');
+      
+      const data = await response.json();
+      
+      setChatHistory(prev => {
+        const newHistory = prev.filter(p => p.text !== 'AI düşünüyor ve ses sentezleniyor...');
+        return [...newHistory, { type: 'ai', text: data.response }];
+      });
+
+      if (data.audio_url) {
+        setChatHistory(prev => [...prev, { type: 'system', text: '🎵 Ses oynatılıyor...' }]);
+        const audio = new Audio(data.audio_url);
+        audio.play().catch(e => console.error("Audio playback error:", e));
+      } else if (data.error) {
+        setChatHistory(prev => [...prev, { type: 'system', text: 'Ses hatası: ' + data.error }]);
+      }
+    } catch (err) {
+      console.error(err);
+      setChatHistory(prev => {
+        const newHistory = prev.filter(p => p.text !== 'AI düşünüyor ve ses sentezleniyor...');
+        return [...newHistory, { type: 'system', text: 'Hata: GPU Worker API bağlantısı kurulamadı.' }];
+      });
+    }
+  };
+
+  const handleMicClick = async () => {
+    if (isLiveMic) return;
+    setIsLiveMic(true);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      const audioChunks = [];
+
+      mediaRecorder.ondataavailable = event => {
+        audioChunks.push(event.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+        const formData = new FormData();
+        formData.append('file', audioBlob, 'custom_voice.webm');
+
+        try {
+          const res = await fetch('http://localhost:8001/api/upload-voice', {
+            method: 'POST',
+            body: formData
+          });
+          const data = await res.json();
+          if (data.status === 'ok') {
+            const newPersona = data.persona;
+            setCustomVoices(prev => [...prev, newPersona]);
+            setVoiceModel(newPersona);
+            alert(`🎤 Sesiniz başarıyla klonlandı! (${newPersona})`);
+          } else {
+            alert("Ses yüklenirken bir hata oluştu: " + (data.message || data.detail || "Bilinmeyen hata"));
+          }
+        } catch (err) {
+          console.error(err);
+          alert("Ses yüklenemedi. API bağlantısını kontrol edin.");
+        }
+        setIsLiveMic(false);
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setTimeout(() => {
+        if (mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+        }
+      }, 5000); // 5 seconds recording
+
+    } catch (err) {
+      console.error("Mikrofon hatası:", err);
+      setIsLiveMic(false);
+      alert("Mikrofon izni alınamadı.");
+    }
   };
 
   return (
@@ -85,8 +213,9 @@ export default function App() {
       {/* ── Main ── */}
       <main className="main">
 
-        {/* ── Video Stage ── */}
-        <section className="video-stage glass-card">
+        <div className="left-column" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          {/* ── Video Stage ── */}
+          <section className="video-stage glass-card">
           <div className="video-stage__title">
             📡 Canlı Video Akışı
           </div>
@@ -117,6 +246,29 @@ export default function App() {
           </div>
         </section>
 
+        {/* ── Chat Stage ── */}
+        <section className="chat-stage glass-card">
+          <div className="chat-stage__title">
+            💬 AI Sohbet & Senaryo
+          </div>
+          <div className="chat-history">
+            {chatHistory.map((msg, i) => (
+              <div key={i} className={`message ${msg.type}`}>{msg.text}</div>
+            ))}
+          </div>
+          <div className="chat-input-area">
+            <input 
+              type="text" 
+              placeholder="Mesajınızı yazın..." 
+              value={chatInput}
+              onChange={e => setChatInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleSendChat()}
+            />
+            <button className="btn btn--primary" onClick={handleSendChat} style={{ width: 'auto', padding: '0 24px' }}>Gönder</button>
+          </div>
+        </section>
+        </div>
+
         {/* ── Sidebar ── */}
         <aside className="sidebar">
 
@@ -139,6 +291,72 @@ export default function App() {
                 </button>
               ))}
             </div>
+          </div>
+
+          {/* ── Ses Simülasyonu Ayarları ── */}
+          <div className="glass-card">
+            <p className="sidebar__section-title">Ses Simülasyonu</p>
+            
+            <div className="input-group" style={{ marginBottom: 12 }}>
+              <label htmlFor="voice-select">Ses Modeli</label>
+              <select 
+                id="voice-select" 
+                className="select-input"
+                value={voiceModel}
+                onChange={e => setVoiceModel(e.target.value)}
+              >
+                {customVoices.length === 0 && <option value="" disabled>Kayıtlı ses yok</option>}
+                {customVoices.map(voice => (
+                  <option key={voice} value={voice}>🎤 {voice.replace('_', ' ').toUpperCase()}</option>
+                ))}
+              </select>
+            </div>
+
+            <div className="slider-group">
+              <label>Konuşma Hızı <span className="slider-val">{speakingRate}x</span></label>
+              <input 
+                type="range" 
+                min="0.5" max="2.0" step="0.1" 
+                value={speakingRate}
+                onChange={e => setSpeakingRate(parseFloat(e.target.value))}
+              />
+            </div>
+
+            <div className="slider-group">
+              <label>Ses Tonu (Pitch) <span className="slider-val">{pitchAdjustment} st</span></label>
+              <input 
+                type="range" 
+                min="-12" max="12" step="1" 
+                value={pitchAdjustment}
+                onChange={e => setPitchAdjustment(parseInt(e.target.value))}
+              />
+            </div>
+
+            <div className="input-group" style={{ marginBottom: 16 }}>
+              <label htmlFor="emotion-select">Duygu Tonu</label>
+              <select 
+                id="emotion-select" 
+                className="select-input"
+                value={emotion}
+                onChange={e => setEmotion(e.target.value)}
+              >
+                <option value="neutral">Nötr (Varsayılan)</option>
+                <option value="happy">Mutlu & Enerjik</option>
+                <option value="serious">Ciddi & Otoriter</option>
+              </select>
+            </div>
+
+            <button
+              id="mic-btn"
+              className={`btn ${isLiveMic ? 'btn--danger' : 'btn--primary'}`}
+              onClick={handleMicClick}
+              style={{ width: '100%', padding: '10px' }}
+            >
+              🎤 {isLiveMic ? 'Dinleniyor... (Durdur)' : 'Canlı Mikrofonu Kullan'}
+            </button>
+            <p style={{ fontSize: '0.65rem', color: 'var(--clr-text-muted)', marginTop: '8px', textAlign: 'center' }}>
+              Ses Klonlama için mikrofondan canlı ses kaydet.
+            </p>
           </div>
 
           {/* ── Performans Ayarları ── */}
