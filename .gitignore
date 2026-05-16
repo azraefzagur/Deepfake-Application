@@ -13,7 +13,13 @@ pip_error.txt
 *.pt
 # Kurulumlar ve Yeni Sanal Ortamlar
 venv/
+env_deepfake/
+.idea/
 *.whl
 *.zip
 *.exe
 pip_out*.txt
+test*.wav
+test_error.txt
+req_bypass.txt
+srs_text.txt
